@@ -115,7 +115,7 @@ struct ReturnPoint {
 
 void appendReturnPoint(ReturnPoint&& rp);
 
-void registerExecPreCallback(std::function<void(CPUState*, target_ulong)> callback);
+void registerExecPreCallback(void (*callback)(CPUState*, target_ulong));
 
 namespace syscalls {
     class string {
