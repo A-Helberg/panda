@@ -38,6 +38,7 @@ extern "C" {
 #include "panda_plugin.h"
 #include "panda_plugin_plugin.h"
 #include "../taint/taint_ext.h"
+#include "../syscalls/syscalls_ext.h"
 #include "gen_syscalls_ext_typedefs.h"
 
     // struct iovec is {void* p, size_t len} which is target-specific
