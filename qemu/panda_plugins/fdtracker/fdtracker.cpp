@@ -363,7 +363,6 @@ static void fdtracker_sys_openat_callback(CPUState* env,target_ulong pc,int32_t 
 }
 
 static Callback_RC dup_callback(CPUState* env, target_asid asid, target_ulong old_fd, target_long new_fd){
-    target_ulong new_fd;
     if(new_fd == NULL_FD){
         new_fd = new_fd;
     }else{
@@ -495,11 +494,11 @@ static void fdtracker_sys_read_callback(CPUState* env,target_ulong pc,uint32_t f
     }
     fdlog << "Process " << comm << " " << "Reading from " << name << endl;
 #ifdef CONFIG_ANDROID
-    if (0 == filename.compare(0 /* start */,
-                              strlen(datadata) /*len*/,
-                              datadata) ) {
+    if (0 == name.compare(0 /* start */,
+                          strlen(datadata) /*len*/,
+                          datadata) ) {
         // We want to taint this, but don't implement things yet
-        cerr << "WARN: Readv called on " << filename << endl;
+        cerr << "WARN: Readv called on " << name << endl;
     }
 #endif
     read_callback(env, panda_current_asid(env), fd, buf, count, ReadType::READ);
@@ -595,7 +594,7 @@ static void fdtracker_sys_writev_callback(CPUState* env,target_ulong pc,uint32_t
 
 /* Sockpair() handling code code is also used for pipe() and must be
  * outside the ifdef(SYSCALLS_FDS_TRACK_SOCKETS)'d region */
-static Callback_RC sockpair_callback(CPUState* env, target_asid asid, target_ulong sd_array, uint32_t domain){
+static Callback_RC sockpair_callback(CPUState* env, target_asid asid, target_ulong sd_array_base, uint32_t domain){
     target_long retval = get_return_val(env);
     //"On success, zero is returned.  On error, -1 is returned, and errno is set appropriately."
     if(0 != retval){
@@ -604,7 +603,7 @@ static Callback_RC sockpair_callback(CPUState* env, target_asid asid, target_ulo
     // sd_array is an array of ints, length 2. NOT target_ulong
     int sd_array[2];
     // On Linux, sizeof(int) != sizeof(long)
-    panda_virtual_memory_rw(env, sd_array, reinterpret_cast<uint8_t*>(sd_array), 2*sizeof(int), 0);
+    panda_virtual_memory_rw(env, sd_array_base, reinterpret_cast<uint8_t*>(sd_array), 2*sizeof(int), 0);
     std::string comm = getName(asid);
     fdlog << "Creating pipe in process " << comm << endl;
     asid_to_fds[asid][sd_array[0]] = "<pipe>";
