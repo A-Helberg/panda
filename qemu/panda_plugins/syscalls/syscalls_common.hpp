@@ -113,10 +113,6 @@ struct ReturnPoint {
     std::function<Callback_RC(CallbackData*, CPUState*, target_asid)> callback;
 };
 
-void appendReturnPoint(ReturnPoint&& rp);
-
-void registerExecPreCallback(void (*callback)(CPUState*, target_ulong));
-
 namespace syscalls {
     class string {
         /**
