@@ -204,18 +204,10 @@ map<target_ulong, bool> tracked_clones;
    use the plugin's internal callback mechanism so we can skip ones
    we don't want (which are distinguished by the arguments)*/
 
-class CloneCallbackData : public CallbackData {
-};
-
 list<target_asid> outstanding_clone_child_asids;
 map<target_ulong, target_asid> outstanding_clone_child_pids;
 
-static Callback_RC clone_callback(CallbackData* opaque, CPUState* env, target_asid asid){
-    CloneCallbackData* data = dynamic_cast<CloneCallbackData*>(opaque);
-    if(!data){
-        fprintf(stderr, "oops\n");
-        return Callback_RC::ERROR;
-    }
+static Callback_RC clone_callback(CPUState* env, target_asid asid){
     // return value is TID = PID of child
     target_long child_pid = get_return_val(env);
     if(0 == child_pid){
@@ -270,8 +262,7 @@ static void fdtracker_call_clone_callback(CPUState* env,target_ulong pc,uint32_t
     if (CLONE_FILES & clone_flags){
         cerr << "ERROR ERROR UNIMPLEMENTED!" << endl;
     }
-    CloneCallbackData *data = new CloneCallbackData;
-    clone_callback(data, env, panda_current_asid(env));
+    clone_callback(env, panda_current_asid(env));
 }
 
 static void preExecCloneCopier(CPUState* env, target_ulong pc){
@@ -305,8 +296,8 @@ static void preExecCloneCopier(CPUState* env, target_ulong pc){
 
 /* Differentiate between read/pread and iovec-based readv */
 enum class ReadType {
-        READ,
-        READV,
+    READ,
+    READV,
 };
 
 
