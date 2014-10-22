@@ -45,7 +45,8 @@ void uninit_plugin(void *);
 
 #include "gen_syscalls_ext_typedefs.h"
 #include "gen_syscall_ppp_register.cpp"
-
+void registerExecPreCallback(void (*callback)(CPUState*, target_ulong));
+void appendReturnPoint(ReturnPoint&& rp);
 }
 #include "gen_syscall_ppp_boilerplate.cpp"
 
