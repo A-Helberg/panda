@@ -743,11 +743,11 @@ bool init_plugin(void *self)
 #ifdef CONFIG_PANDA_VMI
     registerExecPreCallback(preExecForkCopier);
     registerExecPreCallback(preExecCloneCopier);
-    syscalls::register_call_clone(fdtracker_call_clone_callback);
+    PPP_REG_CB("syscalls", on_clone_returned, fdtracker_call_clone_callback);
     panda_cb pcb;
 
     pcb.return_from_fork = return_from_fork;
-    panda_register_callback(syscalls_plugin_self, PANDA_CB_VMI_AFTER_FORK, pcb);
+    panda_register_callback(self, PANDA_CB_VMI_AFTER_FORK, pcb);
 
     init_linux_vmi_api();
 #else //defined CONFIG_PANDA_VMI
