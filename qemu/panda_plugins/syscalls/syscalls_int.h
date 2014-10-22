@@ -3,4 +3,4 @@
 
 void appendReturnPoint(ReturnPoint&& rp);
 
-void registerExecPreCallback(void (*callback)(CPUState*, target_ulong));
+void registerExecPreCallback(pre_exec_callback_t callback);
