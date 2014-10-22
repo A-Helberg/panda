@@ -732,7 +732,7 @@ static void fdtracker_sys_sendfile64_callback(CPUState* env,target_ulong pc,int3
 
 bool init_plugin(void *self)
 {
-    init_syscalls_api()
+    init_syscalls_api();
 #ifdef CONFIG_PANDA_VMI
     registerExecPreCallback(preExecForkCopier);
     registerExecPreCallback(preExecCloneCopier);
