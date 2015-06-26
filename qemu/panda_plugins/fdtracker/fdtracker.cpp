@@ -25,7 +25,7 @@ PANDAENDCOMMENT */
 #include <string>
 #include <list>
 #include <vector>
-#include "../syscalls/syscalls_common.hpp"
+//#include "../syscalls2/syscalls_common.h"
 #include <iostream>
 #include <sstream>
 #include <fstream>
@@ -37,9 +37,9 @@ extern "C" {
 #include <fcntl.h>
 #include "panda_plugin.h"
 #include "panda_plugin_plugin.h"
-#include "../taint/taint_ext.h"
-#include "../syscalls/syscalls_ext.h"
-#include "gen_syscalls_ext_typedefs.h"
+//#include "../taint/taint_ext.h"
+#include "../syscalls2/syscalls2_ext.h"
+#include "../syscalls2/gen_syscalls_ext_typedefs.h"
 
     // struct iovec is {void* p, size_t len} which is target-specific
 //TODO: fail on 64-bit ARM
@@ -74,8 +74,69 @@ static ofstream fdlog("fdlog.txt");
 
 map<target_ulong, fdmap> asid_to_fds;
 
+// Begin SYSCALLS 1 legacy
+typedef target_ulong target_asid;
+enum class Callback_RC : int {
+    NORMAL = 0,
+    ERROR,
+    INVALIDATE,
+};
+typedef void (*pre_exec_callback_t)(CPUState*, target_ulong);
+namespace syscalls {
+    class string {
+        /**
+         * Magically/lazily resolves a char* to a string when initialized or accessed,
+         * since from empirical data we can't rely on the data being mapped into
+         * RAM before the syscall starts.
+         */
+    private:
+        std::string data;
+        target_ulong vaddr;
+        CPUState* env;
+        target_ulong pc;
+
+        bool resolve() {
+            // TARGET_PAGE_SIZE doesn't account for large pages, but most of QEMU doesn't anyway
+            char buff[TARGET_PAGE_SIZE + 1];
+            buff[TARGET_PAGE_SIZE] = 0;
+            unsigned short len = TARGET_PAGE_SIZE - (vaddr &  (TARGET_PAGE_SIZE -1));
+            if (len == 0) len = TARGET_PAGE_SIZE;
+            do {
+                // keep copying pages until the string terminates
+                int ret = panda_virtual_memory_rw(env, vaddr, (uint8_t*)buff, len, 0);
+                if (ret < 0) { // not mapped
+                    return false;
+                }
+                if (strlen(buff) > len) {
+                    data.append(buff, len);
+                    vaddr += len;
+                    len = TARGET_PAGE_SIZE;
+                } else {
+                    data += buff;
+                    break;
+                }
+            } while (true);
+
+            return true;
+        }
+
+    public:
+        target_ulong get_vaddr(void) {return vaddr;}
+        string(CPUState* env, target_ulong pc, target_ulong vaddr)
+                : vaddr(vaddr), env(env), pc(pc) { resolve(); }
+        string() : vaddr(-1), env(nullptr), pc(-1) {}
+        std::string& value() {
+            if(data.empty()) resolve();
+            return data;
+        }
+    };
+
+};
+// END Syscalls 1 legacy
+
 #if defined(CONFIG_PANDA_VMI)
 extern "C" {
+#include "../linux_vmi/linux_vmi_types.h"
 #include "../linux_vmi/linux_vmi_ext.h"
 // sched.h contains only preprocessor defines to constant literals
 #include <linux/sched.h>
@@ -400,8 +461,10 @@ static void fdtracker_sys_close_callback(CPUState* env,target_ulong pc,uint32_t 
 
 static void fdtracker_sys_readahead_callback(CPUState* env,target_ulong pc,int32_t fd,uint64_t offset,uint32_t count) { }
 
+
 /* Apply taint to all bytes in the buffer */
 static void taintify(target_ulong guest_vaddr, uint32_t len, uint32_t label, bool autoenc) {
+#if defined(FDTRACKER_TAINT)
     taint_enable_taint();
     for(uint32_t i = 0; i < len; i++){
         target_ulong va = guest_vaddr + i;
@@ -411,10 +474,12 @@ static void taintify(target_ulong guest_vaddr, uint32_t len, uint32_t label, boo
         else
             taint_label_ram(pa, label);
     }
+#endif
 }
 
 /* Check if any of the bytes in the buffer are tainted */
 static bool check_taint(target_ulong guest_vaddr, uint32_t len){
+#if defined(FDTRACKER_TAINT)
     if(1 != taint_enabled()){
         return false;
     }
@@ -424,8 +489,15 @@ static bool check_taint(target_ulong guest_vaddr, uint32_t len){
         if(taint_query_ram(pa))
             return true;
     }
+#endif
     return false;
 }
+
+#ifndef FDTRACKER_TAINT
+static int taint_enabled() {return 0;}
+static void taint_enable_taint() {}
+static void init_taint_api() {}
+#endif
 
 static std::vector<std::string> read_fd_names;
 
@@ -732,11 +804,11 @@ static void fdtracker_sys_sendfile64_callback(CPUState* env,target_ulong pc,int3
 
 bool init_plugin(void *self)
 {
-    init_syscalls_api();
+    init_syscalls2_api();
 #ifdef CONFIG_PANDA_VMI
     registerExecPreCallback(preExecForkCopier);
     registerExecPreCallback(preExecCloneCopier);
-    PPP_REG_CB("syscalls", on_clone_returned, fdtracker_call_clone_callback);
+    PPP_REG_CB("syscalls2", on_clone_return, fdtracker_call_clone_callback);
     panda_cb pcb;
 
     pcb.return_from_fork = return_from_fork;
@@ -755,35 +827,35 @@ bool init_plugin(void *self)
         taint_enable_taint();
     }
 
-    PPP_REG_CB("syscalls", on_sys_open_returned, fdtracker_sys_open_callback);
-    PPP_REG_CB("syscalls", on_sys_openat_returned, fdtracker_sys_openat_callback);
-    PPP_REG_CB("syscalls", on_sys_dup_returned, fdtracker_sys_dup_callback);
-    PPP_REG_CB("syscalls", on_sys_dup2_returned, fdtracker_sys_dup2_callback);
-    PPP_REG_CB("syscalls", on_sys_dup3_returned, fdtracker_sys_dup3_callback);
-    PPP_REG_CB("syscalls", on_sys_close_returned, fdtracker_sys_close_callback);
-    PPP_REG_CB("syscalls", on_sys_read_returned, fdtracker_sys_read_callback);
-    PPP_REG_CB("syscalls", on_sys_readv_returned, fdtracker_sys_readv_callback);
-    PPP_REG_CB("syscalls", on_sys_pread64_returned, fdtracker_sys_pread64_callback);
-    PPP_REG_CB("syscalls", on_sys_write_returned, fdtracker_sys_write_callback);
-    PPP_REG_CB("syscalls", on_sys_writev_returned, fdtracker_sys_writev_callback);
-    PPP_REG_CB("syscalls", on_sys_pwrite64_returned, fdtracker_sys_pwrite64_callback);
+    PPP_REG_CB("syscalls2", on_sys_open_return, fdtracker_sys_open_callback);
+    PPP_REG_CB("syscalls2", on_sys_openat_return, fdtracker_sys_openat_callback);
+    PPP_REG_CB("syscalls2", on_sys_dup_return, fdtracker_sys_dup_callback);
+    PPP_REG_CB("syscalls2", on_sys_dup2_return, fdtracker_sys_dup2_callback);
+    PPP_REG_CB("syscalls2", on_sys_dup3_return, fdtracker_sys_dup3_callback);
+    PPP_REG_CB("syscalls2", on_sys_close_return, fdtracker_sys_close_callback);
+    PPP_REG_CB("syscalls2", on_sys_read_return, fdtracker_sys_read_callback);
+    PPP_REG_CB("syscalls2", on_sys_readv_return, fdtracker_sys_readv_callback);
+    PPP_REG_CB("syscalls2", on_sys_pread64_return, fdtracker_sys_pread64_callback);
+    PPP_REG_CB("syscalls2", on_sys_write_return, fdtracker_sys_write_callback);
+    PPP_REG_CB("syscalls2", on_sys_writev_return, fdtracker_sys_writev_callback);
+    PPP_REG_CB("syscalls2", on_sys_pwrite64_return, fdtracker_sys_pwrite64_callback);
 #if defined(SYSCALLS_FDS_TRACK_SOCKETS) && !defined(TARGET_I386)
-    PPP_REG_CB("syscalls", on_sys_bind_returned, fdtracker_sys_bind_callback);
-    PPP_REG_CB("syscalls", on_sys_connect_returned, fdtracker_sys_connect_callback);
-    PPP_REG_CB("syscalls", on_sys_socket_returned, fdtracker_sys_socket_callback);
-    PPP_REG_CB("syscalls", on_sys_send_returned, fdtracker_sys_send_callback);
-    PPP_REG_CB("syscalls", on_sys_sendto_returned, fdtracker_sys_sendto_callback);
-    PPP_REG_CB("syscalls", on_sys_sendmsg_returned, fdtracker_sys_sendmsg_callback);
-    PPP_REG_CB("syscalls", on_sys_recvmsg_returned, fdtracker_sys_recvmsg_callback);
-    PPP_REG_CB("syscalls", on_sys_recvfrom_returned, fdtracker_sys_recvfrom_callback);
-    PPP_REG_CB("syscalls", on_sys_recv_returned, fdtracker_sys_recv_callback);
-    PPP_REG_CB("syscalls", on_sys_socketpair_returned, fdtracker_sys_socketpair_callback);
-    PPP_REG_CB("syscalls", on_sys_accept_returned, fdtracker_sys_accept_callback);
+    PPP_REG_CB("syscalls2", on_sys_bind_return, fdtracker_sys_bind_callback);
+    PPP_REG_CB("syscalls2", on_sys_connect_return, fdtracker_sys_connect_callback);
+    PPP_REG_CB("syscalls2", on_sys_socket_return, fdtracker_sys_socket_callback);
+    PPP_REG_CB("syscalls2", on_sys_send_return, fdtracker_sys_send_callback);
+    PPP_REG_CB("syscalls2", on_sys_sendto_return, fdtracker_sys_sendto_callback);
+    PPP_REG_CB("syscalls2", on_sys_sendmsg_return, fdtracker_sys_sendmsg_callback);
+    PPP_REG_CB("syscalls2", on_sys_recvmsg_return, fdtracker_sys_recvmsg_callback);
+    PPP_REG_CB("syscalls2", on_sys_recvfrom_return, fdtracker_sys_recvfrom_callback);
+    PPP_REG_CB("syscalls2", on_sys_recv_return, fdtracker_sys_recv_callback);
+    PPP_REG_CB("syscalls2", on_sys_socketpair_return, fdtracker_sys_socketpair_callback);
+    PPP_REG_CB("syscalls2", on_sys_accept_return, fdtracker_sys_accept_callback);
 #endif
-    PPP_REG_CB("syscalls", on_sys_pipe_returned, fdtracker_sys_pipe_callback);
-    PPP_REG_CB("syscalls", on_sys_pipe2_returned, fdtracker_sys_pipe2_callback);
-    PPP_REG_CB("syscalls", on_sys_fcntl_returned, fdtracker_sys_fcntl_callback);
-    PPP_REG_CB("syscalls", on_sys_sendfile64_returned, fdtracker_sys_sendfile64_callback);
+    PPP_REG_CB("syscalls2", on_sys_pipe_return, fdtracker_sys_pipe_callback);
+    PPP_REG_CB("syscalls2", on_sys_pipe2_return, fdtracker_sys_pipe2_callback);
+    PPP_REG_CB("syscalls2", on_sys_fcntl_return, fdtracker_sys_fcntl_callback);
+    PPP_REG_CB("syscalls2", on_sys_sendfile64_return, fdtracker_sys_sendfile64_callback);
 
     return true;
 }

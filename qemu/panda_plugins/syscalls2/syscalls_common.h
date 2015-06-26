@@ -4,10 +4,9 @@
 extern "C" {
 // get definitions of QEMU types
 #include "cpu.h"
-
+target_long get_return_val(CPUState *env);
 }
 
-target_long get_return_val(CPUState *env);
 target_ulong mask_retaddr_to_pc(target_ulong retaddr);
 target_ulong calc_retaddr(CPUState* env, target_ulong pc) ;
 
